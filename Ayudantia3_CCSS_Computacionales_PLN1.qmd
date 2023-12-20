@@ -1,0 +1,521 @@
+---
+title: "Ayudantia3_PLN_clase1"
+author: "Alejandra Molina"
+format: html
+editor: visual
+---
+
+## Introducción
+
+Cuando tenemos una gran cantidad de datos necesitamos herramientas automatizadas para analizarlos y sacar conclusiones. Esto se complejiza cuando los datos son textos en lenguaje natural no estructurado.
+
+Hay un conjunto de herramientas para analizar textos que sirven para distintas funciones, en este curso verán algunas de ellas.
+
+Carguemos las librerías que vamos a usar:
+
+```{r echo: false}
+library(tidyr)
+library(dplyr)
+library(readr)
+library(reshape2)
+library(stringr)   # Para manipular strings
+library(tidytext)  # Para trabajar con corpus al estilo tidyverse (dataframes)
+library(quanteda)  # Otro paquete de análsisi de texto
+library(wordcloud2) # Para hacer una nube de palabras según su frecuencia
+library(topicmodels) # Para hacer topic modelling con LDA
+library(stm)        # Para hacer topic modelling con STM
+
+```
+
+## Organización de los datos
+
+Para organizar la información definiremos distintos niveles:
+
+-   1- CORPUS: Contiene el conjunto de todos los documentos.
+
+-   2 -DOCUMENTOS: Contiene un conjunto de oraciones. Generalmente proviene de una sola fuente. Por ejemplo: un discurso, un libro, un tweet.
+
+-   3- ORACIONES: Contiene un conjunto de tokens. Una o varias oraciones componen un documento.
+
+-   4- TOKENS: Son la unidad mínima de análisis. Usualmente son palabras, pero pueden ser frases.
+
+Vamos a cargar algunos DOCUMENTOS para crear un CORPUS.
+
+Usaremos como ejemplo algunos discursos presidenciales de Lagos, Bachelet y Piñera.
+
+Fuente: <https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/LFTQEZ>
+
+```{r}
+source = "datos/gpd_chile"
+# Veamos lo que contiene la carpeta
+dir_list<-list.files(source)
+dir_list
+```
+
+Supongamos que queremos analizar el contenido de cada frase de cada documento, entonces vamos a leer cada línea de cada texto y guardarla en un DataFrame:
+
+```{r}
+discursos <- data.frame()
+
+# Guardaremos cada línea de cada documento en una fila del corpus
+for (i in 1:length(dir_list)) {
+  filename <- paste('gpd_chile/', dir_list[i], sep = '')
+  lines <- readLines(filename, encoding = 'UTF-8') #Guardamos cada linea del texto
+  lines <- str_trim(lines, side = 'right') #Extraemos espacios del final de la linea
+  lines <- lines[lines != ' ']#Extraaer líneas vacias del documento
+  lines <- lines[lines != '']#Extraaer líneas vacias del documento
+  asd <- data.frame(lineas = lines)
+  filename_split<-strsplit(dir_list[i], '_')[[1]]
+  asd$country <- filename_split[1]
+  asd$presidente <- filename_split[2]
+  asd$type <- filename_split[3]
+  asd$num <- sub('.txt', '', filename_split[4])
+  asd$id <- dir_list[i]
+  
+  discursos <- bind_rows(discursos, asd)
+}
+
+# Ahora supongamos que queremos que en cada línea del corpus quede un documento completo
+discursos2 <- data.frame()
+# Guardaremos cada línea de cada documento en una fila del corpus
+for (i in 1:length(dir_list)) {
+  filename <- paste('datos/gpd_chile/', dir_list[i], sep = '')
+  texto <- paste(readLines(filename),collapse="") #Guardamos todas las lineas en una sola variable
+  texto <- str_trim(texto, side = 'right') #Extraemos espacios del final de la linea
+  asd <- data.frame(texto = texto)
+  filename_split<-strsplit(dir_list[i], '_')[[1]]
+  asd$country <- filename_split[1]
+  asd$presidente <- filename_split[2]
+  asd$type <- filename_split[3]
+  asd$num <- sub('.txt', '', filename_split[4])
+  asd$id <- dir_list[i]
+  
+  discursos2 <- bind_rows(discursos2, asd)
+}
+
+
+```
+
+## Pre-procesamiento y transformaciones
+
+Una vez que tenemos listo nuestro CORPUS debemos hacer algunas transformaciones del texto para facilitar el análisis.
+
+Vamos a hacerlo con dos paquetes diferentes:
+
+-   ***tidytext***: es compatible con todo el tidyverse, se trabaja como DataFrames. Más familiar para los R lovers. No es tiene diccionarios en español, pero se pueden descargar por separado.
+
+-   ***quanteda***: es más simple que tidytext, pero más "caja negra".
+
+Les dejo las dos opciones para que vean lo que más les acomode de acuerdo sus propios proyectos.
+
+### Procesamiento con Tidytext:
+
+Lo más típico es seguir los siguentes pasos:
+
+#### 1. Tokenización
+
+Un token es una unidad significativa de texto, como una palabra o frase, que nos interesa utilizar para el análisis, y la tokenización es el proceso de dividir el texto en tokens.
+
+Vamos a "tokenizar" nuestro corpus en frases y en palabras.
+
+```{r}
+# Vamos a separar en oraciones cada línea del corpus
+corpus_TT_S <- discursos %>%
+  group_by(country,presidente,type,num) %>%
+  unnest_tokens(oraciones,lineas,token="sentences")
+  
+
+# Si quisieramos separar por "palabras" cada línea del corpus cambiamos el token
+# Vamos a guardar el número de la oración desde donde proviene cada palabara por si acaso. Agregamos la columna "sentencenumber"
+
+corpus_TT_S <- corpus_TT_S %>%
+  group_by(country,presidente,type,num) %>%
+  mutate(sentencenumber = row_number()) %>% 
+  ungroup()
+
+
+corpus_TT_W <- corpus_TT_S %>%
+     unnest_tokens(palabras,oraciones,token="regex")
+
+```
+
+#### 2. Transformar todo el texto a minúsculas
+
+La función "unnest_tokens" hace esto de forma automática. Si no se quiere transformar a minúsculas, se debe usar el argumento "*to_lower=FALSE*".
+
+```{r}
+corpus_TT_UW <- corpus_TT_S %>%
+     unnest_tokens(palabras,oraciones,token="regex",to_lower = FALSE)
+```
+
+También se pueden usar las funciones para trabajar con texto de la librería *stringr*.
+
+```{r}
+text="1- En este eJeMpLo, tenemos $muchas$ cosas que arreglar !!!"
+text=str_to_upper(text)
+text
+text=str_to_lower(text)
+text
+```
+
+#### 3. Eliminar signos de puntuación y números
+
+Esto lo podemos hacer con el paquete *stringr* que nos sirve, como dice su nombre, para trabajar con cadenas de texto en R.
+
+La eliminación de números es algo típico, pero no obligatorio, dependiendo del tipo de análisis que se quiera hacer es posible querer dejar los números. Esto se puede realizar antes o después de la tokenización.
+
+```{r}
+# Texto original
+text
+
+# Remover puntuaciones y otros caracteres que no son números ni palabras
+special_char_pattern <- "[^A-Za-z0-9 ]"
+cleaned_text <- str_replace_all(text, special_char_pattern, "")
+cleaned_text
+
+# Remover numeros
+numeric_pattern <- "\\d"
+no_number_text <- str_remove_all(cleaned_text, numeric_pattern)
+no_number_text 
+
+# Remover espacios vacios adelante y atras
+no_number_text <- str_trim(no_number_text) 
+no_number_text 
+```
+
+Ahora hagamos lo mismo con el corpus:
+
+```{r}
+special_char_pattern <- "[^A-Za-z0-9À-ÖØ-öø-ÿ ]" # Acá podemos poner cualquier caracter que queramos remover
+corpus_TT_W_clean <- corpus_TT_W %>% 
+  mutate(palabras=str_trim(str_remove_all(palabras, special_char_pattern)))
+
+corpus_TT_S_clean <- corpus_TT_S %>% 
+  mutate(oraciones=str_trim(str_remove_all(oraciones, special_char_pattern)))
+
+
+numeric_pattern <- "\\d+"
+corpus_TT_W_clean <- corpus_TT_W_clean %>% 
+  mutate(palabras=str_trim(str_remove_all(palabras, numeric_pattern)))
+
+corpus_TT_S_clean <- corpus_TT_S_clean %>% 
+  mutate(oraciones=str_trim(str_remove_all(oraciones, numeric_pattern)))
+
+```
+
+Si quieren remover algunos tipos de caracteres especiales y otros no, se debe especificar en la variable *special_char_pattern*. Pueden ver el código de cada tipo de caracter en el cheat sheet de Stringr que está en la carpeta de esta clase. En ese mismo documento pueden ver otros tipos de transformaciones que se pueden hacer al texto con *stringr*.
+
+#### 4. Remover Stopwords
+
+```{r}
+stopwords_es <- read.csv("https://bitsandbricks.github.io/data/stopwords_es.csv",
+                      stringsAsFactors = FALSE)
+
+corpus_TT_W_clean <- corpus_TT_W_clean %>% 
+   anti_join(stopwords_es, by = c("palabras" = "STOPWORD"))
+
+#corpus_TT_S_clean <- corpus_TT_S_clean %>% 
+#   anti_join(stopwords_es, by = c("oraciones" = "STOPWORD"))
+
+```
+
+#### 5. Stemmizar
+
+Stemizar es recortar la palabra hasta su raíz. (Juego, Jugamos, Jugar, Juguete -\> Jugu)
+
+### Procesamiento con Quanteda:
+
+Vamos a usar el paquete *quanteda* para trabajar con el corpus. Les invito a mirar el tutorial para ver las opciones que tiene cada función.
+
+<https://tutorials.quanteda.io/>
+
+Vamos a crear el corpus en formato *quanteda*
+
+```{r}
+corpus_QT <- corpus(discursos, text_field = "lineas")
+#print(corpus_QT)
+#summary(corpus_QT)
+
+# CREAMOS UN CORPUS DE ORACIONES
+corpus_QT_S <- corpus_reshape(corpus_QT, to = "sentences")
+
+```
+
+#### 1. Tokenización y limpieza del texto
+
+Acá, la tokenización tiene incluidas las opciones de transformar el texto a minúscula y eliminar los caracteres especiales (incluidos los números).
+
+```{r}
+# Primero debemos crear un listado de tokens en el formato de quanteda
+# Acá tambien se pueden hacer transformaciones de caracteres 
+# como parámetros de la función tokens
+
+corpus_QT_S_clean <- tokens(corpus_QT_S,
+                     remove_numbers = TRUE,
+                     remove_punct = TRUE,
+                     remove_symbols = TRUE
+                     )
+corpus_QT_S_clean <- tokens_tolower(corpus_QT_S_clean)
+```
+
+#### 2- Remover Stopwords
+
+Para esto necesitamos un listado de palabras que queremos remover de los textos. Vamos a usar el diccionario en español de stopwords de quanteda. Ustedes pueden sacarle o agregarle palabras a este listado.
+
+```{r}
+stpw=quanteda::stopwords(language = "es")
+print(stpw)
+
+corpus_QT_S_clean <- tokens_select(corpus_QT_S_clean,pattern=stpw, selection="remove")
+```
+
+La función *token_select* tiene muchas otras opciones, ahora la usamos para remover ciertas palabras, pero tambien la podríamos usar para quedarnos con ciertas palabras que nos interesan y eliminar las otras. Por ejemplo:
+
+toks_ciertas_palabras \<- tokens_select(toks, pattern = c("ciertas_palabras1\*", "ciertas_palabaras2\*"), padding = TRUE)
+
+\*\*padding=TRUE mantiene los espacios de las palabras eliminadas en caso de que nos importe saber en que posición dentro del documento estaban las palabras que quedaron.
+
+#### 3- Stemmizar
+
+```{r}
+             
+corpus_QT_S_stem <- tokens_wordstem(corpus_QT_S_clean, language = "es")
+
+
+```
+
+### Lemmatizar
+
+Lematizar es transformar la plabara en su forma masculino-singular para sustantivos y adjetivos, y en infinitivo para verbos. Se requiere de un diccionario que indique cuales son los grupos de palabras con su palabra "representativa".
+
+Esto es más difícil de realizar, pues se requieren diccionarios específicos para cada idioma que agrupe las palabras que se quieren transformar en una sola, por ejemplo:
+
+juego = \[juguete, juguetito, juegos, etc\]
+
+Para lemmatizar se puede usar Spacy de Python (el paquete estrella para PLN en Python) a traves de un paquete de R llamado *spacyr*, es un poco "tricky" pq usa python de fondo (es como un traductor de R a Python), asi que paciencia con la instalación.
+
+Más información sobre este paquete en: <https://spacyr.quanteda.io/>
+
+Veamos paso a paso:
+
+```{r}
+install.packages("spacyr")
+```
+
+Con *spacy_install* inicializamos el sistema "hibrido", además debemos pasarle el path de python, con reticulate::install_python() se descarga e installa una versión mínima de python que queda asociada a la carpeta de trabajo. Esto entrega el path a python que se guarda en la variable *python_exe*, si ya está instalado, este mismo comando solo entrega el path sin descargar e instalar de nuevo. Tambien se puede usar el path a un python que ya tengas en tu computador.
+
+```{r}
+library("spacyr")
+python_exe <- reticulate::install_python()
+spacy_install()
+```
+
+Si todo va bien, podemos instalar el modelo de idioma que queremos (por defecto viene en inglés: *en_core_web_sm*):
+
+En este sitio pueden ver como se llaman los distintos modelos de lenguaje: <https://spacy.io/usage/models>
+
+Bajemos los modelos en español:
+
+-   *es_dep_news_trf* más preciso
+
+-   *es_core_news_sm* más eficiente
+
+```{r}
+spacy_download_langmodel("es_core_news_sm")
+spacy_download_langmodel("es_dep_news_trf")
+```
+
+Después de todo esto, por fin podemos lematizar:
+
+```{r}
+spacy_initialize(model = "es_core_news_sm")
+
+txt='La niña esta jugando con la pelotita'
+txt_lemma<-spacy_parse(txt, tag = TRUE, entity = FALSE, lemma = TRUE)
+print(txt_lemma)
+
+```
+
+Como vemos, la función entrega cada palabra en una fila, por lo que deberemos trabajar con el corpus de palabras (no frases) y reconstruirlo en frases a posteriori.
+
+```{r}
+words_lemma <- spacy_parse(words2$palabras,lemma = TRUE)
+```
+
+## Análisis de frecuencia
+
+### Bolsa de palabras
+
+Vamos a crear una matriz de documentos (filas) y palabras (columnas), con el número de apariciones de esa palabra en cada documento, esto se llama DFM (document-feature matrix).
+
+Versión Tidytext:
+
+```{r}
+
+DTM_TT <- corpus_TT_W_clean %>%
+  group_by(country,presidente,type,num) %>%
+  count(palabras)
+
+```
+
+Versión Quanteda:
+
+```{r}
+DTM_QT <- dfm(corpus_QT_S_clean)
+print(DTM_QT)
+# SI NO HEMOS STEMIZADO ANTES LO PODEMOS HACER AHORA 
+# DMF_stemmed <- dfm_wordstem(DMF, language = "es")
+
+```
+
+### Nube de palabras
+
+Versión Tidytext:
+
+```{r}
+dtm_sum_TT <-corpus_TT_W_clean %>%
+  count(palabras, sort = TRUE)
+wordcloud2(dtm_sum_TT)
+```
+
+Versión Quanteda:
+
+```{r}
+# Primero sumamos la aparición de cada palabra en todos los documentos
+dtm_sum_QT <- colSums(DTM_QT)
+dtm_sum_QT <- as.data.frame(dtm_sum_QT)
+# Agregamos una columna con las palabras que contamos
+dtm_sum_QT$words <-row.names(dtm_sum_QT)
+# Damos vuelta el orden de las columnas
+dtm_sum_QT <- subset(dtm_sum_QT, select=c("words","dtm_sum_QT"))
+
+wordcloud2(dtm_sum_QT)
+
+# Ahora seleccionemos solo las palabras que aparecen más de 50 veces
+dtm_sum_QT_sub <- dtm_sum_QT %>%
+                   filter(dtm_sum_QT>50)
+
+wordcloud2(dtm_sum_QT_sub)
+```
+
+### Matriz TF-IDF
+
+Vamos a continuar con Quanteda, pero ya vieron que hay en Tidytext se pueden hacer los cálculos equivalentes, acá les dejo el link <https://www.tidytextmining.com/tfidf>.
+
+```{r}
+TF_IDF_QT <- dfm_tfidf(DTM_QT)
+print(TF_IDF_QT)
+```
+
+## Topic Modelling
+
+Cada documento se representa como una distribución de tópicos y cada tópico como una distribución de palabras.
+
+Hagamos un análisis de tópicos para los documentos, usando cada discurso como un texto:
+
+```{r}
+# CREAMOS EL CORPUS
+corpus_disc <- corpus(discursos2, text_field = "texto")
+
+# TOKENIZAMOS Y LIMPIAMOS
+tokens_disc <- tokens(corpus_disc,
+                     remove_numbers = TRUE,
+                     remove_punct = TRUE,
+                     remove_symbols = TRUE
+                     )
+tokens_disc <- tokens_tolower(tokens_disc)
+
+# SACAMOS LAS STOPWORDS
+tokens_disc <- tokens_select(tokens_disc,pattern=stpw, selection="remove")
+
+# STEMIZAMOS
+tokens_disc_stem <- tokens_wordstem(tokens_disc, language = "es")
+```
+
+Ahora calculemos las matrices DTM y TF-IDF
+
+```{r}
+DTM_disc <- dfm(tokens_disc_stem)
+TF_IDF_disc <- dfm_tfidf(DTM_disc)
+```
+
+### LDA: Latent Dirichlet Allocation
+
+```{r}
+num_topics <- 10
+
+lda_model <- LDA(DTM_disc, k = num_topics)
+
+
+top_words <- terms(lda_model,10)
+
+top_topics <- topics(lda_model,10)
+```
+
+El modelo calculará 2 matrices:
+
+-   Beta: peso de cada palabra en un tópico
+
+-   Gamma: peso de cada tópico en un documento
+
+```{r}
+beta <- tidy(lda_model, matrix = "beta")
+
+beta_top_terms <- beta %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>% 
+  ungroup() %>%
+  arrange(topic, -beta)
+
+gamma <- tidy(lda_model, matrix = "gamma")
+
+gamma_top_topics <- gamma %>%
+  group_by(document) %>%
+  slice_max(gamma, n = 4) %>% 
+  ungroup() %>%
+  arrange(document, -gamma)
+```
+
+```{r}
+
+```
+
+### STM: Structural Topic Model
+
+Esta metodología permite incluir la metadata de los documentos en el cálculo de los tópicos.
+
+Transformamos la matriz de frecuencia al formato que requiere STM:
+
+```{r}
+STM_disc <- convert(DFM_disc, to = "stm")
+```
+
+El objeto STM contiene un listado de todas las palabras del corpus (*vocab*) y la metadata de cada documento (*meta*).
+
+```{r}
+Ntopicos=2
+model.stm <- stm(STM_disc$documents, STM_disc$vocab, K = Ntopicos, data = STM_disc$meta, init.type = "Spectral") 
+
+data.frame(t(labelTopics(model.stm, n = 10)$prob))
+
+```
+
+```{r}
+SC2 <- semanticCoherence(model.stm, STM_disc$documents, M = 10)
+
+```
+
+```{r}
+SC <- data.frame()  
+for (t in 2:12){
+  Ntopicos <- as.numeric(t)
+  print(Ntopicos)
+  model.stm <- stm(STM_disc$documents, STM_disc$vocab, K = Ntopicos, data = STM_disc$meta, init.type = "Spectral") 
+  SCi_aux <- mean(semanticCoherence(model.stm, STM_disc$documents, M = 10))
+  SCi <- data.frame(SC = SCi_aux)
+  SC <- bind_rows(SC, SCi)
+}
+SC<-mutate(SC,"Ntopicos"=2:12)
+p<-ggplot(SC,aes(Ntopicos,SC)) + geom_point()
+p
+```
